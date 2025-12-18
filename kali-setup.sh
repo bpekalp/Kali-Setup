@@ -7,8 +7,8 @@
 # Usage: sudo ./kali-setup.sh [path/to/cert.crt]
 ################################################################################
 
-set -e  # Exit on error
-set -o pipefail  # Exit on pipe failure
+# Removed set -e to allow proper error handling with || log_error patterns
+# Error tracking is handled through ERROR_COUNT variable and trap handler
 
 ################################################################################
 # COLOR CODES
@@ -29,7 +29,7 @@ SCRIPT_START_TIME=$(date +%s)
 LOG_FILE="$HOME/kali-setup.log"
 ERROR_COUNT=0
 CURRENT_STEP=0
-TOTAL_STEPS=200
+TOTAL_STEPS=85  # Updated to match actual progress() calls
 CERT_FILE=""
 
 ################################################################################
@@ -81,6 +81,20 @@ handle_error() {
 }
 
 trap 'handle_error ${LINENO}' ERR
+
+################################################################################
+# COMMAND VERIFICATION
+################################################################################
+check_command() {
+    local cmd="$1"
+    local install_msg="$2"
+
+    if ! command -v "$cmd" &>/dev/null; then
+        log_error "$cmd not found. $install_msg"
+        return 1
+    fi
+    return 0
+}
 
 ################################################################################
 # PRIVILEGE CHECK
@@ -168,7 +182,14 @@ update_system() {
     
     progress "Installing OpenJDK"
     apt install -y openjdk-21-jdk || apt install -y openjdk-17-jdk || log_error "Failed to install OpenJDK"
-    
+
+    progress "Installing build tools"
+    apt install -y build-essential make || log_error "Failed to install build tools"
+
+    progress "Installing Node.js for BloodHound"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || log_error "Failed to add Node.js repository"
+    apt install -y nodejs || log_error "Failed to install Node.js"
+
     log_success "System update completed"
 }
 
@@ -183,12 +204,6 @@ install_shell() {
     
     progress "Installing Starship prompt"
     curl -sS https://starship.rs/install.sh | sh -s -- -y || log_error "Failed to install Starship"
-    
-    progress "Installing eza (modern ls)"
-    apt install -y eza || {
-        log_warning "eza not in repos, trying alternative installation"
-        cargo install eza 2>/dev/null || log_error "Failed to install eza"
-    }
     
     log_success "Shell tools installed"
 }
@@ -224,11 +239,31 @@ install_dev_tools() {
     
     progress "Installing Rust for root"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || log_error "Failed to install Rust for root"
-    
-    # Source Rust environment
-    source "$ACTUAL_HOME/.cargo/env" 2>/dev/null || true
-    source /root/.cargo/env 2>/dev/null || true
-    
+
+    # Source Rust environment with verification
+    progress "Verifying Rust environment"
+    if ! source "$ACTUAL_HOME/.cargo/env" 2>/dev/null; then
+        log_warning "Failed to source user Rust environment at $ACTUAL_HOME/.cargo/env"
+    fi
+
+    if ! source /root/.cargo/env 2>/dev/null; then
+        log_warning "Failed to source root Rust environment"
+    fi
+
+    # Verify cargo is available
+    if ! command -v cargo &>/dev/null; then
+        log_error "Cargo not found in PATH after Rust installation"
+    else
+        log_success "Rust and Cargo successfully configured"
+    fi
+
+    # Install eza now that Rust/cargo is available
+    progress "Installing eza (modern ls)"
+    apt install -y eza || {
+        log_warning "eza not in repos, installing via cargo"
+        su - "$ACTUAL_USER" -c "source ~/.cargo/env && cargo install eza" || log_error "Failed to install eza"
+    }
+
     log_success "Development tools installed"
 }
 
@@ -265,19 +300,33 @@ configure_fish_global() {
     progress "Creating global fish config"
     
     cat > /etc/fish/config.fish << 'EOF'
-# Starship initialization
-starship init fish | source
+# Starship initialization (with availability check)
+if command -v starship >/dev/null 2>&1
+    starship init fish | source
+else
+    echo "Warning: Starship not found - install with: curl -sS https://starship.rs/install.sh | sh"
+end
 
 # Disable fish greeting
 set -g fish_greeting
 
-# Eza aliases
-alias ls='eza --icons --group-directories-first'
-alias tree='eza --tree --icons'
+# Eza aliases (with availability check)
+if command -v eza >/dev/null 2>&1
+    alias ls='eza --icons --group-directories-first'
+    alias tree='eza --tree --icons'
+else
+    # Fallback to standard ls
+    alias ls='ls --color=auto'
+end
 
 # Fish abbreviations
-abbr -a ll 'eza -la --icons --group-directories-first'
-abbr -a la 'eza -a --icons --group-directories-first'
+if command -v eza >/dev/null 2>&1
+    abbr -a ll 'eza -la --icons --group-directories-first'
+    abbr -a la 'eza -a --icons --group-directories-first'
+else
+    abbr -a ll 'ls -la'
+    abbr -a la 'ls -a'
+end
 abbr -a .. 'cd ..'
 abbr -a ... 'cd ../..'
 abbr -a .... 'cd ../../..'
@@ -338,7 +387,7 @@ end
 # Tools update function
 function update-tools
     echo "Updating pentesting tools..."
-    
+
     # Update Go tools
     echo "Updating Go tools..."
     go install github.com/ffuf/ffuf/v2@latest
@@ -355,22 +404,27 @@ function update-tools
     go install github.com/jpillora/chisel@latest
     go install github.com/nicocha30/ligolo-ng/cmd/proxy@latest
     go install github.com/nicocha30/ligolo-ng/cmd/agent@latest
-    
+
     # Update Rust tools
     echo "Updating Rust tools..."
-    cargo install feroxbuster
-    cargo install rustscan
-    cargo install rustcat
-    cargo install rusthound
-    
+    cargo install feroxbuster --force
+    cargo install rustscan --force
+    cargo install rustcat --force
+    cargo install rusthound --force
+    cargo install eza --force
+
     # Update pipx tools
     echo "Updating pipx tools..."
     pipx upgrade-all
-    
+
     # Update nuclei templates
     echo "Updating nuclei templates..."
     nuclei -update-templates
-    
+
+    # Update APT tools
+    echo "Updating system packages..."
+    sudo apt update && sudo apt upgrade -y
+
     echo "Tools update complete!"
 end
 
@@ -426,15 +480,15 @@ create_directory_structure() {
 ################################################################################
 clone_wordlists() {
     section_header "Cloning Wordlist Repositories"
-    
+
     progress "Cloning fuzzdb"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/fuzzdb-project/fuzzdb.git ~/wordlists/fuzzdb" || log_error "Failed to clone fuzzdb"
-    
+    su - "$ACTUAL_USER" -c "git clone --depth 1 https://github.com/fuzzdb-project/fuzzdb.git ~/wordlists/fuzzdb" || log_error "Failed to clone fuzzdb"
+
     progress "Cloning SecLists"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/danielmiessler/SecLists.git ~/wordlists/SecLists" || log_error "Failed to clone SecLists"
-    
+    su - "$ACTUAL_USER" -c "git clone --depth 1 https://github.com/danielmiessler/SecLists.git ~/wordlists/SecLists" || log_error "Failed to clone SecLists"
+
     progress "Cloning PayloadsAllTheThings"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/swisskyrepo/PayloadsAllTheThings.git ~/wordlists/PayloadsAllTheThings" || log_error "Failed to clone PayloadsAllTheThings"
+    su - "$ACTUAL_USER" -c "git clone --depth 1 https://github.com/swisskyrepo/PayloadsAllTheThings.git ~/wordlists/PayloadsAllTheThings" || log_error "Failed to clone PayloadsAllTheThings"
     
     log_success "Wordlist repositories cloned"
 }
@@ -464,19 +518,23 @@ install_web_tools() {
     # Rust-based tools
     progress "Installing feroxbuster"
     su - "$ACTUAL_USER" -c "source ~/.cargo/env && cargo install feroxbuster" || log_error "Failed to install feroxbuster"
-    
-    # Git clone tools
-    progress "Cloning XSStrike"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/s0md3v/XSStrike.git ~/tools/web/XSStrike && cd ~/tools/web/XSStrike && pip install -r requirements.txt --break-system-packages" || log_error "Failed to clone XSStrike"
-    
-    progress "Cloning Arjun"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/s0md3v/Arjun.git ~/tools/web/Arjun && cd ~/tools/web/Arjun && pip install -r requirements.txt --break-system-packages" || log_error "Failed to clone Arjun"
-    
-    progress "Cloning Corsy"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/s0md3v/Corsy.git ~/tools/web/Corsy && cd ~/tools/web/Corsy && pip install -r requirements.txt --break-system-packages" || log_error "Failed to clone Corsy"
-    
-    progress "Cloning sqlmap"
-    su - "$ACTUAL_USER" -c "git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git ~/tools/web/sqlmap" || log_error "Failed to clone sqlmap"
+
+    # Python tools via pipx (isolated environments)
+    progress "Installing XSStrike with dependencies"
+    su - "$ACTUAL_USER" -c "git clone --depth 1 https://github.com/s0md3v/XSStrike.git ~/tools/web/XSStrike && \
+        cd ~/tools/web/XSStrike && \
+        python3 -m pip install --user -r requirements.txt" || log_error "Failed to install XSStrike"
+
+    progress "Installing Arjun"
+    su - "$ACTUAL_USER" -c "pipx install arjun" || log_error "Failed to install Arjun"
+
+    progress "Installing Corsy with dependencies"
+    su - "$ACTUAL_USER" -c "git clone --depth 1 https://github.com/s0md3v/Corsy.git ~/tools/web/Corsy && \
+        cd ~/tools/web/Corsy && \
+        python3 -m pip install --user -r requirements.txt" || log_error "Failed to install Corsy"
+
+    progress "Installing sqlmap"
+    apt install -y sqlmap || log_error "Failed to install sqlmap"
     
     log_success "Web tools installed"
 }
@@ -537,13 +595,16 @@ install_network_tools() {
 ################################################################################
 install_exploit_tools() {
     section_header "Installing Exploitation & C2 Frameworks"
-    
-    progress "Cloning sliver"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/BishopFox/sliver.git ~/tools/exploit/sliver" || log_error "Failed to clone sliver"
-    
+
+    progress "Installing Sliver C2 Framework"
+    curl https://sliver.sh/install | su - "$ACTUAL_USER" -c "bash" || {
+        log_warning "Failed to install via script, cloning repository"
+        su - "$ACTUAL_USER" -c "git clone https://github.com/BishopFox/sliver.git ~/tools/exploit/sliver" || log_error "Failed to clone sliver"
+    }
+
     progress "Installing impacket"
     su - "$ACTUAL_USER" -c "pipx install impacket" || log_error "Failed to install impacket"
-    
+
     log_success "Exploitation tools installed"
 }
 
@@ -555,18 +616,24 @@ install_ad_tools() {
     
     progress "Installing Neo4j"
     apt install -y neo4j || log_error "Failed to install Neo4j"
-    
+
+    progress "Enabling Neo4j service"
+    systemctl enable neo4j &>/dev/null || log_warning "Failed to enable Neo4j service"
+
+    progress "Starting Neo4j service"
+    systemctl start neo4j &>/dev/null || log_warning "Failed to start Neo4j - start manually with: sudo systemctl start neo4j"
+
     progress "Cloning BloodHound"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/SpecterOps/BloodHound.git ~/tools/ad/BloodHound" || log_error "Failed to clone BloodHound"
+    su - "$ACTUAL_USER" -c "git clone --depth 1 https://github.com/SpecterOps/BloodHound.git ~/tools/ad/BloodHound" || log_error "Failed to clone BloodHound"
     
     progress "Installing RustHound"
     su - "$ACTUAL_USER" -c "source ~/.cargo/env && cargo install rusthound" || log_error "Failed to install RustHound"
     
     progress "Installing Certipy"
     su - "$ACTUAL_USER" -c "pipx install certipy-ad" || log_error "Failed to install Certipy"
-    
-    progress "Cloning Coercer"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/p0dalirius/Coercer.git ~/tools/ad/Coercer && cd ~/tools/ad/Coercer && pip install -r requirements.txt --break-system-packages" || log_error "Failed to clone Coercer"
+
+    progress "Installing Coercer"
+    su - "$ACTUAL_USER" -c "pipx install git+https://github.com/p0dalirius/Coercer.git" || log_error "Failed to install Coercer"
     
     log_success "Active Directory tools installed"
 }
@@ -576,12 +643,12 @@ install_ad_tools() {
 ################################################################################
 install_privesc_tools() {
     section_header "Installing Privilege Escalation Tools"
-    
+
     progress "Cloning PEASS-ng"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/carlospolop/PEASS-ng ~/tools/privesc/PEASS-ng && chmod +x ~/tools/privesc/PEASS-ng/linPEAS/linpeas.sh" || log_error "Failed to clone PEASS-ng"
-    
+    su - "$ACTUAL_USER" -c "git clone --depth 1 https://github.com/carlospolop/PEASS-ng ~/tools/privesc/PEASS-ng && chmod +x ~/tools/privesc/PEASS-ng/linPEAS/linpeas.sh" || log_error "Failed to clone PEASS-ng"
+
     progress "Cloning linux-exploit-suggester"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/The-Z-Labs/linux-exploit-suggester ~/tools/privesc/linux-exploit-suggester && chmod +x ~/tools/privesc/linux-exploit-suggester/linux-exploit-suggester.sh" || log_error "Failed to clone linux-exploit-suggester"
+    su - "$ACTUAL_USER" -c "git clone --depth 1 https://github.com/The-Z-Labs/linux-exploit-suggester ~/tools/privesc/linux-exploit-suggester && chmod +x ~/tools/privesc/linux-exploit-suggester/linux-exploit-suggester.sh" || log_error "Failed to clone linux-exploit-suggester"
     
     log_success "Privilege escalation tools installed"
 }
@@ -591,13 +658,10 @@ install_privesc_tools() {
 ################################################################################
 install_automation_tools() {
     section_header "Installing Automation Frameworks"
-    
+
     progress "Installing AutoRecon"
     su - "$ACTUAL_USER" -c "pipx install git+https://github.com/Tib3rius/AutoRecon.git" || log_error "Failed to install AutoRecon"
-    
-    progress "Cloning ReconFTW"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/six2dez/reconftw ~/tools/automation/reconftw && cd ~/tools/automation/reconftw && ./install.sh" || log_error "Failed to clone ReconFTW"
-    
+
     log_success "Automation tools installed"
 }
 
@@ -609,10 +673,10 @@ install_osint_tools() {
     
     progress "Installing sherlock"
     su - "$ACTUAL_USER" -c "pipx install sherlock-project" || log_error "Failed to install sherlock"
-    
-    progress "Cloning holehe"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/megadose/holehe.git ~/tools/osint/holehe && cd ~/tools/osint/holehe && pip install -r requirements.txt --break-system-packages" || log_error "Failed to clone holehe"
-    
+
+    progress "Installing holehe"
+    su - "$ACTUAL_USER" -c "pipx install git+https://github.com/megadose/holehe.git" || log_error "Failed to install holehe"
+
     progress "Installing h8mail"
     su - "$ACTUAL_USER" -c "pipx install h8mail" || log_error "Failed to install h8mail"
     
@@ -624,13 +688,16 @@ install_osint_tools() {
 ################################################################################
 install_cloud_tools() {
     section_header "Installing Cloud & Container Security Tools"
-    
-    progress "Cloning trivy"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/aquasecurity/trivy.git ~/tools/cloud/trivy" || log_error "Failed to clone trivy"
-    
-    progress "Cloning kube-hunter"
-    su - "$ACTUAL_USER" -c "git clone https://github.com/aquasecurity/kube-hunter.git ~/tools/cloud/kube-hunter" || log_error "Failed to clone kube-hunter"
-    
+
+    progress "Installing trivy"
+    apt install -y trivy || {
+        log_warning "trivy not in repos, installing from official script"
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin || log_error "Failed to install trivy"
+    }
+
+    progress "Installing kube-hunter"
+    su - "$ACTUAL_USER" -c "pipx install kube-hunter" || log_error "Failed to install kube-hunter"
+
     log_success "Cloud tools installed"
 }
 
@@ -690,11 +757,27 @@ create_documentation() {
 - **cloud/** - Cloud and container security
 - **misc/** - Miscellaneous tools
 
-## Installed Tools
+## Tool Locations
+
+### Command-Line Tools (automatically in PATH)
+- **Go tools** → `~/go/bin/`: ffuf, httpx, katana, nuclei, dalfox, subfinder, assetfinder, amass, puredns, dnsx, naabu, chisel, ligolo-ng (proxy+agent)
+- **Rust tools** → `~/.cargo/bin/`: feroxbuster, rustscan, rustcat, rusthound, eza
+- **Pipx tools** → `~/.local/bin/`: impacket, certipy-ad, coercer, autorecon, sherlock, holehe, h8mail, ciphey, haiti, kube-hunter, arjun
+- **APT packages** → `/usr/bin/`: sqlmap, neo4j, trivy
+
+### Repository Clones (for manual execution or building)
+- **~/tools/web/**: XSStrike, Corsy (with Python dependencies installed)
+- **~/tools/ad/**: BloodHound (requires: cd ~/tools/ad/BloodHound && npm install && npm run build)
+- **~/tools/privesc/**: PEASS-ng, linux-exploit-suggester
+- **~/tools/exploit/**: sliver (if official installer failed, requires: cd ~/tools/exploit/sliver && make)
+
+## Installed Tools Summary
 
 ### Web Tools (10)
-- ffuf, httpx, katana, nuclei, dalfox
-- feroxbuster, XSStrike, Arjun, Corsy, sqlmap
+- **Go**: ffuf, httpx, katana, nuclei, dalfox
+- **Rust**: feroxbuster
+- **Python**: XSStrike, Arjun, Corsy
+- **APT**: sqlmap
 
 ### Recon Tools (7)
 - subfinder, assetfinder, amass, puredns, dnsx, naabu, rustscan
@@ -703,7 +786,7 @@ create_documentation() {
 - chisel, ligolo-ng (proxy+agent), rustcat
 
 ### Exploitation Tools (2)
-- sliver, impacket
+- Sliver C2, impacket
 
 ### Active Directory Tools (5)
 - Neo4j, BloodHound, RustHound, Certipy, Coercer
@@ -711,8 +794,8 @@ create_documentation() {
 ### Privilege Escalation (2)
 - PEASS-ng, linux-exploit-suggester
 
-### Automation (2)
-- AutoRecon, ReconFTW
+### Automation (1)
+- AutoRecon
 
 ### OSINT Tools (3)
 - sherlock, holehe, h8mail
@@ -751,23 +834,19 @@ create_documentation() {
 4. Launch BloodHound: Check build instructions in ~/tools/ad/BloodHound
 5. Collect data with RustHound: `rusthound [options]`
 
-## Git-Cloned Tools Requiring Build
+## Tools Notes
 
 ### Sliver C2 Framework
-- **Location**: ~/tools/exploit/sliver
-- **Build**: `cd ~/tools/exploit/sliver && make`
+- **Installation**: Installed via official script (https://sliver.sh/install)
+- **Fallback**: If script fails, cloned to ~/tools/exploit/sliver (requires `make`)
 
 ### BloodHound CE
 - **Location**: ~/tools/ad/BloodHound
-- **Build**: Check README.md in the repo
+- **Note**: Requires manual build, check README.md in the repository
 
-### Trivy Scanner
-- **Location**: ~/tools/cloud/trivy
-- **Build**: `cd ~/tools/cloud/trivy && go install`
-
-### Kube-hunter
-- **Location**: ~/tools/cloud/kube-hunter
-- **Usage**: `cd ~/tools/cloud/kube-hunter && python kube-hunter.py`
+### XSStrike & Corsy
+- **Locations**: ~/tools/web/XSStrike, ~/tools/web/Corsy
+- **Usage**: Run directly with Python (dependencies via requirements.txt handled during clone)
 EOFREADME
 
     chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/tools/README.md"
@@ -794,22 +873,49 @@ cleanup() {
 ################################################################################
 verify_installation() {
     section_header "Verification Tests"
-    
+
+    local verification_errors=0
+
     progress "Testing Go tools"
-    su - "$ACTUAL_USER" -c "httpx -version" &>/dev/null && log_success "httpx installed" || log_warning "httpx not found"
-    su - "$ACTUAL_USER" -c "nuclei -version" &>/dev/null && log_success "nuclei installed" || log_warning "nuclei not found"
-    
+    for tool in httpx nuclei ffuf subfinder; do
+        if su - "$ACTUAL_USER" -c "command -v $tool" &>/dev/null; then
+            log_success "$tool found in PATH"
+        else
+            log_error "$tool not found - installation may have failed"
+            ((verification_errors++))
+        fi
+    done
+
     progress "Testing Rust tools"
-    su - "$ACTUAL_USER" -c "feroxbuster --version" &>/dev/null && log_success "feroxbuster installed" || log_warning "feroxbuster not found"
-    su - "$ACTUAL_USER" -c "rustscan --version" &>/dev/null && log_success "rustscan installed" || log_warning "rustscan not found"
-    
+    for tool in feroxbuster rustscan; do
+        if su - "$ACTUAL_USER" -c "command -v $tool" &>/dev/null; then
+            log_success "$tool found in PATH"
+        else
+            log_error "$tool not found - installation may have failed"
+            ((verification_errors++))
+        fi
+    done
+
     progress "Testing Python tools"
-    su - "$ACTUAL_USER" -c "pipx list" &>/dev/null && log_success "pipx tools installed" || log_warning "pipx issues detected"
-    
+    if su - "$ACTUAL_USER" -c "pipx list" &>/dev/null; then
+        log_success "pipx tools installed"
+    else
+        log_error "pipx tools not found"
+        ((verification_errors++))
+    fi
+
     progress "Verifying Neo4j"
-    systemctl status neo4j &>/dev/null && log_success "Neo4j service active" || log_warning "Neo4j not active"
-    
-    log_success "Verification completed"
+    if systemctl status neo4j &>/dev/null; then
+        log_success "Neo4j service active"
+    else
+        log_warning "Neo4j not active (will be started manually)"
+    fi
+
+    if [[ $verification_errors -gt 0 ]]; then
+        log_error "Verification completed with $verification_errors failures"
+    else
+        log_success "All critical tools verified successfully"
+    fi
 }
 
 ################################################################################
@@ -828,13 +934,15 @@ display_summary() {
     echo -e "${YELLOW}Errors encountered: $ERROR_COUNT${NC}"
     echo ""
     echo -e "${CYAN}Statistics:${NC}"
-    echo "  - Total tools installed: 42"
+    echo "  - Total tools installed: 41"
     echo "  - Wordlist repositories: 3"
     echo "  - Directory categories: 10"
-    echo "  - Go tools: 16"
-    echo "  - Rust tools: 4"
-    echo "  - Pipx tools: 7"
-    echo "  - Git clone tools: 15"
+    echo "  - Go tools: 14"
+    echo "  - Rust tools: 5 (feroxbuster, rustscan, rustcat, rusthound, eza)"
+    echo "  - Pipx tools: 11 (impacket, certipy-ad, coercer, autorecon, sherlock, holehe, h8mail, ciphey, haiti, kube-hunter, arjun)"
+    echo "  - APT tools: 3 (sqlmap, neo4j, trivy)"
+    echo "  - Git clone tools: 5 (XSStrike, Corsy, BloodHound, PEASS-ng, linux-exploit-suggester)"
+    echo "  - Build dependencies: Node.js, build-essential, make"
     echo ""
     echo -e "${BOLD}${MAGENTA}MANUAL STEPS REQUIRED:${NC}"
     echo ""
@@ -853,10 +961,8 @@ display_summary() {
     echo "   - Change default password (neo4j/neo4j)"
     echo ""
     echo -e "${YELLOW}4. Build required tools:${NC}"
-    echo "   - Sliver: cd ~/tools/exploit/sliver && make"
-    echo "   - BloodHound: Check README in ~/tools/ad/BloodHound"
-    echo "   - Trivy: cd ~/tools/cloud/trivy && go install"
-    echo "   - Kube-hunter: cd ~/tools/cloud/kube-hunter && pip install -r requirements.txt"
+    echo "   - BloodHound: cd ~/tools/ad/BloodHound && npm install && npm run build"
+    echo "   - Sliver: Only if official installer failed: cd ~/tools/exploit/sliver && make"
     echo ""
     echo -e "${YELLOW}5. Test your setup:${NC}"
     echo "   - Open new terminal"
