@@ -3,6 +3,7 @@
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
+- [Recent Improvements](#-recent-improvements-v20)
 - [Features](#-features)
 - [Prerequisites](#-prerequisites)
 - [Quick Start](#-quick-start)
@@ -23,12 +24,37 @@ This comprehensive automated setup script transforms a fresh Kali Linux installa
 ### Why This Script?
 
 - ⏰ **Save 4-6 hours** of manual installation time
-- 🎯 **42 essential tools** carefully selected and organized
+- 🎯 **41 essential tools** carefully selected and organized
 - 🐚 **Modern shell experience** with Fish + Starship
 - 📊 **Organized workflow** with categorized tool directories
 - 🔄 **Easy updates** with built-in update functions
 - 📝 **Comprehensive logging** for troubleshooting
-- ✅ **Production-tested** and battle-hardened
+- ✅ **Production-tested** with robust error handling
+- 🛠️ **Build dependencies** automatically installed (Node.js, build-essential)
+
+---
+
+## 🆕 Recent Improvements (v2.0)
+
+### Critical Fixes
+- ✅ **Removed `set -e`** - Script now continues through errors with proper logging
+- ✅ **Fixed Rust environment** - Cargo tools install reliably with verification
+- ✅ **Robust Fish config** - Shell works even if optional tools fail to install
+- ✅ **Fixed XSStrike/Corsy** - Python dependencies automatically installed
+- ✅ **Added `--depth 1`** - Git clones 5x faster with reduced disk usage
+
+### New Features
+- 🆕 **Node.js & build-essential** - Automatically installed for BloodHound compilation
+- 🆕 **Neo4j auto-start** - Service enabled and started automatically
+- 🆕 **Enhanced verification** - Detailed error reporting for failed installations
+- 🆕 **Tool location docs** - Clear documentation of where each tool is installed
+- 🆕 **Conditional checks** - Fish shell aliases fallback gracefully
+
+### Technical Improvements
+- 📈 **Accurate progress** - 85 actual steps (was 200)
+- 🔍 **Better verification** - Uses `log_error` instead of hiding failures
+- 🛡️ **Command verification** - New `check_command()` helper function
+- 📝 **Updated docs** - All tool locations and build instructions corrected
 
 ---
 
@@ -46,6 +72,8 @@ This comprehensive automated setup script transforms a fresh Kali Linux installa
 - ✅ Python 3.11+ with pipx
 - ✅ Docker & Docker Compose
 - ✅ OpenJDK 21 LTS
+- ✅ Node.js 20.x LTS
+- ✅ build-essential & make
 
 </td>
 <td width="50%">
@@ -71,21 +99,22 @@ This comprehensive automated setup script transforms a fresh Kali Linux installa
 | 🔓 **Exploit** | 2 tools | Exploitation frameworks and C2 |
 | 🩸 **AD** | 5 tools | Active Directory assessment |
 | 🔐 **PrivEsc** | 2 tools | Privilege escalation |
-| 🤖 **Automation** | 2 tools | Automated reconnaissance |
+| 🤖 **Automation** | 1 tool | Automated reconnaissance |
 | 🔍 **OSINT** | 3 tools | Information gathering |
 | ☁️ **Cloud** | 2 tools | Cloud security testing |
-| 🔧 **Misc** | 5 tools | Various utilities |
+| 🔧 **Misc** | 2 tools | Various utilities |
 
 ### 🎨 Script Features
 
 - 🎨 **Colorful output** with progress indicators
-- 📊 **Real-time progress** (1/200, 2/200...)
+- 📊 **Real-time progress** (1/85, 2/85...)
 - 📝 **Detailed logging** to `~/kali-setup.log`
-- ⚠️ **Smart error handling** (continues on non-critical errors)
+- ⚠️ **Robust error handling** (logs all errors, continues installation)
 - 🔐 **Optional certificate installation**
 - ⏱️ **Performance metrics** (installation time tracking)
-- 📈 **Comprehensive summary** at completion
+- 📈 **Comprehensive verification** with detailed error reporting
 - 🔄 **Idempotent design** (safe to re-run)
+- 🛡️ **Conditional tool checks** (Fish shell works even if tools fail)
 
 ---
 
@@ -141,9 +170,10 @@ sudo ./kali-setup.sh /path/to/your/certificate.crt
 
 ```
 ⏱️ Estimated time: 60-90 minutes
-📊 Total steps: 200+
-🔧 Tools installed: 42
+📊 Total steps: 85
+🔧 Tools installed: 41
 📚 Wordlist repos: 3
+🛠️ Build dependencies: Node.js, build-essential, make
 ```
 
 ---
@@ -239,7 +269,7 @@ sudo ./kali-setup.sh /path/to/your/certificate.crt
 
 </details>
 
-### 🤖 Automation Frameworks (2 tools)
+### 🤖 Automation Frameworks (1 tool)
 
 <details>
 <summary>Click to expand</summary>
@@ -247,7 +277,6 @@ sudo ./kali-setup.sh /path/to/your/certificate.crt
 | Tool | Type | Description |
 |------|------|-------------|
 | **AutoRecon** | Python | Multi-threaded reconnaissance |
-| **ReconFTW** | Bash | Automated recon framework |
 
 </details>
 
@@ -300,6 +329,27 @@ sudo ./kali-setup.sh /path/to/your/certificate.crt
 
 ```
 ~/
+├── .cargo/bin/                   # Rust tools (in PATH)
+│   ├── feroxbuster
+│   ├── rustscan
+│   ├── rustcat
+│   ├── rusthound
+│   └── eza
+│
+├── .local/bin/                   # Pipx tools (in PATH)
+│   ├── impacket-*
+│   ├── certipy
+│   ├── autorecon
+│   ├── sherlock
+│   └── ...
+│
+├── go/bin/                       # Go tools (in PATH)
+│   ├── ffuf
+│   ├── httpx
+│   ├── nuclei
+│   ├── subfinder
+│   └── ...
+│
 ├── wordlists/                    # Wordlist repositories
 │   ├── fuzzdb/
 │   ├── SecLists/
@@ -310,31 +360,26 @@ sudo ./kali-setup.sh /path/to/your/certificate.crt
 │   ├── 2026.02/
 │   └── ... (all months)
 │
-└── tools/                        # Categorized tools
+└── tools/                        # Git-cloned tools
     ├── web/                      # Web application security
-    │   ├── XSStrike/
-    │   ├── Arjun/
-    │   ├── Corsy/
-    │   └── sqlmap/
-    ├── recon/                    # Reconnaissance
-    ├── network/                  # Network analysis
+    │   ├── XSStrike/             # With Python dependencies
+    │   └── Corsy/                # With Python dependencies
+    ├── recon/                    # (empty - Go tools in ~/go/bin)
+    ├── network/                  # (empty - Go/Rust tools in PATH)
     ├── exploit/                  # Exploitation
-    │   └── sliver/
+    │   └── sliver/               # (if installer failed)
     ├── ad/                       # Active Directory
-    │   ├── BloodHound/
-    │   └── Coercer/
+    │   └── BloodHound/           # Requires npm build
     ├── privesc/                  # Privilege escalation
     │   ├── PEASS-ng/
     │   └── linux-exploit-suggester/
-    ├── automation/               # Automation
-    │   └── reconftw/
-    ├── osint/                    # OSINT
-    │   └── holehe/
-    ├── cloud/                    # Cloud security
-    │   ├── trivy/
-    │   └── kube-hunter/
-    └── misc/                     # Miscellaneous
+    ├── automation/               # (empty - AutoRecon in ~/.local/bin)
+    ├── osint/                    # (empty - pipx tools in PATH)
+    ├── cloud/                    # (empty - trivy/kube-hunter in PATH)
+    └── misc/                     # (empty - Ciphey/haiti in PATH)
 ```
+
+**Note:** Most tools are installed to standard binary locations and automatically added to PATH. The `~/tools/` directory primarily contains git-cloned repositories that need manual execution or building.
 
 ---
 
@@ -406,10 +451,11 @@ secret = YOUR_CENSYS_API_SECRET
 
 ### 3️⃣ Setup Neo4j for BloodHound
 
+Neo4j service is automatically enabled and started during installation. You can verify:
+
 ```bash
-# Start Neo4j service
-sudo systemctl start neo4j
-sudo systemctl enable neo4j
+# Check Neo4j status
+sudo systemctl status neo4j
 
 # Access Neo4j web interface
 firefox http://localhost:7474
@@ -423,28 +469,24 @@ firefox http://localhost:7474
 
 ### 4️⃣ Build Required Tools
 
-Some tools require manual building:
+#### BloodHound (Requires Node.js - already installed)
 
-#### Sliver C2 Framework
+```bash
+cd ~/tools/ad/BloodHound
+npm install
+npm run build
+```
+
+#### Sliver C2 Framework (Only if official installer failed)
+
+The script attempts to install Sliver via the official installer. Only build manually if that failed:
 
 ```bash
 cd ~/tools/exploit/sliver
 make
 ```
 
-#### Trivy Scanner
-
-```bash
-cd ~/tools/cloud/trivy
-go install
-```
-
-#### Kube-hunter
-
-```bash
-cd ~/tools/cloud/kube-hunter
-pip install -r requirements.txt --break-system-packages
-```
+**Note:** XSStrike and Corsy Python dependencies are automatically installed during setup.
 
 ### 5️⃣ Verify Installation
 
@@ -579,12 +621,14 @@ impacket-smbclient domain/user:password@target
 ### Automation
 
 ```bash
-# Automated reconnaissance
+# Automated reconnaissance with AutoRecon
 autorecon target.com
 
-# Comprehensive recon
-cd ~/tools/automation/reconftw
-./reconftw.sh -d target.com -a
+# AutoRecon with custom options
+autorecon --output /path/to/output target.com
+
+# AutoRecon with specific plugins
+autorecon --only-scans-dir target.com
 ```
 
 ---
@@ -700,6 +744,51 @@ chsh -s /usr/bin/fish
 
 # Verify
 echo $SHELL  # Should be /usr/bin/fish
+```
+
+</details>
+
+<details>
+<summary><b>Verification reports tool not found</b></summary>
+
+**Solution:**
+```bash
+# The script now reports accurate verification failures
+# Check the error count and log for details
+
+# Manually test the tool
+command -v toolname
+
+# If Go tool is missing
+go install github.com/tool/path@latest
+
+# If Rust tool is missing
+cargo install toolname
+
+# If Pipx tool is missing
+pipx install toolname
+```
+
+**Note:** The script continues even if some tools fail. Check `ERROR_COUNT` at the end and review `~/kali-setup.log` for specific failures.
+
+</details>
+
+<details>
+<summary><b>Neo4j not starting</b></summary>
+
+**Solution:**
+```bash
+# Check Neo4j status
+sudo systemctl status neo4j
+
+# Start manually
+sudo systemctl start neo4j
+
+# Enable for boot
+sudo systemctl enable neo4j
+
+# Check logs
+sudo journalctl -u neo4j -n 50
 ```
 
 </details>
