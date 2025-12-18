@@ -991,7 +991,7 @@ main() {
     ║                                                               ║
     ║        Kali Linux Complete Setup Script                       ║
     ║        Author: Barış PEKALP                                   ║
-    ║        Version: 1.0                                           ║
+    ║        Version: 2.0                                           ║
     ║                                                               ║
     ╚═══════════════════════════════════════════════════════════════╝
 EOF
