@@ -142,14 +142,14 @@ This comprehensive automated setup script transforms a fresh Kali Linux installa
 
 ```bash
 # Download and run the script
-curl -fsSL https://raw.githubusercontent.com/barispekalp/kali-setup/main/kali-setup.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/peksec/kali-setup/main/kali-setup.sh | sudo bash
 ```
 
 ### Manual Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/barispekalp/kali-setup.git
+git clone https://github.com/peksec/kali-setup.git
 cd kali-setup
 
 # Make script executable
